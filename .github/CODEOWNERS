@@ -1,0 +1,11 @@
+# Requests reviews automatically. Fill in the GitHub logins, then uncomment.
+# Keep in sync with contracts/ownership.map.
+
+/ai-client/                 @ElFariss
+
+# /app/                     TODO: FE
+# /backend/server/          TODO: BE-1
+# /backend/platform-core/   TODO: BE-1
+# /backend/realtime-chat/   TODO: BE-2
+# /backend/rag-llm/         TODO: AI-2
+# /contracts/               TODO: everyone
