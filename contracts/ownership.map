@@ -1,0 +1,30 @@
+# Who may push changes to which path. Read by scripts/git/check.sh (hooks and CI).
+#
+#   <role> <path prefix>
+#
+# The longest matching prefix wins. "shared" paths may be changed from any role's branch,
+# but the pull request needs approval from every affected owner.
+
+fe      app/
+ai1     ai-client/
+be1     backend/server/
+be1     backend/platform-core/
+be2     backend/realtime-chat/
+ai2     backend/rag-llm/
+
+shared  contracts/
+shared  docs/
+shared  gradle/
+shared  scripts/
+shared  .githooks/
+shared  .github/
+shared  .editorconfig
+shared  .gitattributes
+shared  .gitignore
+shared  CONTRIBUTING.md
+shared  README.md
+shared  THIRD_PARTY_NOTICES.md
+shared  build.gradle.kts
+shared  gradle.properties
+shared  gradlew
+shared  settings.gradle.kts
