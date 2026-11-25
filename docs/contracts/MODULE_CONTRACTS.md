@@ -75,3 +75,13 @@ Each upload ID identifies immutable file contents. BE-1 owns the job and persist
 prevent a duplicate job from overwriting a completed status.
 Only completed uploads are eligible for retrieval because a failed job may have written some vectors.
 See [AI-2 ingestion configuration](../../backend/rag-llm/README.md#document-ingestion).
+
+### BE-2 institution Q&A
+
+Once BE-2 authorizes the session and resolves its institution, call
+`askRag(question, sessionId, institutionSlug)` and forward the returned answer and sources.
+BE-1 supplies `CompletedRagDocuments` to restrict retrieval to current completed uploads
+from that institution. Treat `IllegalArgumentException` as invalid input and `IOException`
+as a failure to complete the request. Empty sources represent an abstention or a prompt to
+select an institution. The response confidence is derived from retrieval similarity.
+See [AI-2 Q&A configuration](../../backend/rag-llm/README.md#institution-qa).
