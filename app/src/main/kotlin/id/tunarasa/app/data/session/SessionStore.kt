@@ -6,7 +6,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import id.tunarasa.app.ui.chat.UiChatMessage
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -87,16 +86,5 @@ class SessionStore(private val context: Context) {
             prefs.remove(KEY_ADMIN_EMAIL)
             prefs.remove(KEY_ADMIN_ROLE)
         }
-    }
-}
-
-/** Menyimpan riwayat sesi obrolan terakhir di memori untuk pembuatan ringkasan lokal */
-object ActiveConversationCache {
-    var institutionName: String = "Layanan Publik"
-    var messages: List<UiChatMessage> = emptyList()
-
-    fun update(institution: String, currentMessages: List<UiChatMessage>) {
-        institutionName = institution
-        messages = currentMessages.toList()
     }
 }

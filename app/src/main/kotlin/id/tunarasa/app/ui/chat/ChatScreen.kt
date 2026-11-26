@@ -19,14 +19,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import id.tunarasa.app.data.ApiClient
+import id.tunarasa.app.data.ApiResult
+import id.tunarasa.app.data.ChatEntry
+import id.tunarasa.app.data.InstitutionResponse
+import id.tunarasa.app.data.PlatformApi
+import id.tunarasa.app.data.PublicChatApi
+import id.tunarasa.app.data.session.SessionStore
 import id.tunarasa.app.ui.theme.BlueHeroCard
 import id.tunarasa.app.ui.theme.MintBadgeBg
 import id.tunarasa.app.ui.theme.MintBadgeText
+import id.tunarasa.contracts.ServiceMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -36,7 +46,8 @@ data class UiChatMessage(
     val title: String? = null,
     val content: String,
     val sourceLabel: String? = null,
-    val relatedQuestion: String? = null
+    val relatedQuestion: String? = null,
+    val inputMethod: String = "text",
 )
 
 @Composable
@@ -47,11 +58,18 @@ fun ChatScreen(
     onBackClick: () -> Unit = {},
     onSwitchToSibi: () -> Unit = {},
     onSwitchToSpeech: () -> Unit = {},
-    onFinishConversation: (String) -> Unit = {}
+    onFinishConversation: (String, String) -> Unit = { _, _ -> }
 ) {
-    val institutionTitle = remember(institutionSlug) {
-        institutionSlug.replaceFirstChar { it.uppercase() }
+    val context = LocalContext.current
+    val client = remember { ApiClient(enableLogging = false) }
+    val api = remember(client) { PublicChatApi(client) }
+    val platform = remember(client) { PlatformApi(client) }
+    val session = remember(context) { SessionStore(context.applicationContext) }
+    var institutionTitle by remember(institutionSlug) {
+        mutableStateOf(institutionSlug.replaceFirstChar { it.uppercase() })
     }
+    var selectedInstitution by remember(institutionSlug) { mutableStateOf<InstitutionResponse?>(null) }
+    DisposableEffect(client) { onDispose { client.close() } }
 
     val messages = remember {
         mutableStateListOf(
@@ -65,59 +83,186 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
-    var isConnectionError by remember { mutableStateOf(false) }
-    var pendingFailedMessage by remember { mutableStateOf("") }
+    var requestError by remember { mutableStateOf<String?>(null) }
+    var pendingQuestion by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var savedConversationId by remember { mutableStateOf<Int?>(null) }
+    var validationConversationId by remember { mutableStateOf<Int?>(null) }
+    var serviceMode by remember { mutableStateOf<ServiceMode?>(null) }
+    var validationPending by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
 
-    fun sendQuestion(text: String) {
+    fun sendQuestion(text: String, method: String = "text") {
         val cleanText = text.trim()
-        if (cleanText.isBlank() || isProcessing) return
-
-        // Simulasi uji error koneksi jika user mengetik kata kunci "offline"
-        if (cleanText.equals("offline", ignoreCase = true)) {
-            pendingFailedMessage = cleanText
-            isConnectionError = true
+        if (cleanText.isBlank() || isProcessing || savedConversationId != null) return
+        if (cleanText.length > 500 || messages.size >= 501) {
+            coroutineScope.launch { snackbar.showSnackbar("Batas panjang pertanyaan atau jumlah pesan tercapai.") }
             return
         }
-
-        messages.add(
-            UiChatMessage(
-                id = "user-${System.currentTimeMillis()}",
-                isUser = true,
-                content = cleanText
-            )
-        )
-        inputText = ""
         isProcessing = true
 
         coroutineScope.launch {
-            delay(700) // Simulasi waktu respons RAG/LLM sebelum BE aktif
-            val reply = buildMockAssistantReply(cleanText, institutionTitle)
-            messages.add(reply)
-            isProcessing = false
-            listState.animateScrollToItem(messages.lastIndex)
+            try {
+                val sessionId = session.getOrCreateSessionId()
+                if (serviceMode == null) {
+                    when (val result = platform.getServiceConfig()) {
+                        is ApiResult.Success -> {
+                            serviceMode = ServiceMode.entries.find { it.wire == result.data.serviceMode }
+                            if (serviceMode == null) {
+                                requestError = "Mode layanan tidak dikenali."
+                                pendingQuestion = cleanText to method
+                                return@launch
+                            }
+                        }
+                        is ApiResult.Error -> {
+                            requestError = result.message
+                            pendingQuestion = cleanText to method
+                            return@launch
+                        }
+                    }
+                }
+                var institution = selectedInstitution
+                if (institution == null) {
+                    institution = when (val result = platform.getInstitutions()) {
+                        is ApiResult.Success -> result.data.firstOrNull { it.slug == institutionSlug }
+                        is ApiResult.Error -> {
+                            requestError = result.message
+                            pendingQuestion = cleanText to method
+                            return@launch
+                        }
+                    }
+                    if (institution == null) {
+                        requestError = "Institusi tidak tersedia."
+                        pendingQuestion = cleanText to method
+                        return@launch
+                    }
+                    selectedInstitution = institution
+                    institutionTitle = institution.name
+                }
+                if (serviceMode == ServiceMode.BOT_WITH_ADMIN_VALIDATION) {
+                    when (val result = api.submitForValidation(cleanText, sessionId, institution.id, institutionSlug, method)) {
+                        is ApiResult.Success -> {
+                            validationPending = true
+                            validationConversationId = result.data.conversationId
+                            if (inputText.trim() == cleanText) inputText = ""
+                        }
+                        is ApiResult.Error -> {
+                            requestError = result.message
+                            pendingQuestion = cleanText to method
+                        }
+                    }
+                    return@launch
+                }
+                when (val result = api.ask(cleanText, sessionId, institutionSlug, method)) {
+                    is ApiResult.Success -> {
+                        val index = messages.size
+                        messages.add(UiChatMessage("user-$index", true, content = cleanText, inputMethod = method))
+                        messages.add(
+                            UiChatMessage(
+                                id = "bot-$index",
+                                isUser = false,
+                                content = result.data.answer,
+                                sourceLabel = result.data.sources.firstOrNull()?.let { "Sumber: ${it.documentId}" },
+                                relatedQuestion = result.data.followUpSuggestions.firstOrNull(),
+                                inputMethod = method,
+                            )
+                        )
+                        if (inputText.trim() == cleanText) inputText = ""
+                        listState.animateScrollToItem(messages.lastIndex)
+                    }
+                    is ApiResult.Error -> {
+                        pendingQuestion = cleanText to method
+                        requestError = result.message
+                    }
+                }
+            } finally {
+                isProcessing = false
+            }
         }
     }
 
-    // Kirim otomatis jika ada pertanyaan bawaan dari layar FAQ / SIBI / Suara
     LaunchedEffect(initialQuestion) {
         if (initialQuestion.isNotBlank() && messages.size == 1) {
-            sendQuestion(initialQuestion)
+            sendQuestion(initialQuestion, inputMethod)
         }
     }
 
-    if (isConnectionError) {
-        ConnectionErrorScreen(
-            onBackClick = { isConnectionError = false },
-            onRetryClick = {
-                isConnectionError = false
-                if (pendingFailedMessage.isNotBlank()) {
-                    val retryText = pendingFailedMessage
-                    pendingFailedMessage = ""
-                    sendQuestion(retryText)
+    LaunchedEffect(validationConversationId) {
+        val conversationId = validationConversationId ?: return@LaunchedEffect
+        val sessionId = session.getOrCreateSessionId()
+        while (true) {
+            when (val result = api.getMessages(conversationId, sessionId)) {
+                is ApiResult.Success -> {
+                    val thread = result.data.messages.map {
+                        UiChatMessage(
+                            id = it.id,
+                            isUser = it.type == "user",
+                            title = it.adminName,
+                            content = it.content,
+                            inputMethod = it.inputMethod ?: "text",
+                        )
+                    }
+                    if (thread.isNotEmpty() && messages.drop(1) != thread) {
+                        messages.removeRange(1, messages.size)
+                        messages.addAll(thread)
+                        validationPending = thread.last().isUser
+                        listState.animateScrollToItem(messages.lastIndex)
+                    }
                 }
+                is ApiResult.Error -> Unit
+            }
+            delay(2_000)
+        }
+    }
+
+    fun finishConversation() {
+        isProcessing = true
+        coroutineScope.launch {
+            try {
+                val sessionId = session.getOrCreateSessionId()
+                var conversationId = savedConversationId ?: validationConversationId
+                if (conversationId == null) {
+                    val institution = selectedInstitution ?: return@launch
+                    val entries = messages.drop(1).map {
+                        ChatEntry(it.content, if (it.isUser) "user" else "assistant", it.inputMethod)
+                    }
+                    when (val result = api.saveConversation(sessionId, institution.id, entries)) {
+                        is ApiResult.Success -> {
+                            conversationId = result.data.conversationId
+                            savedConversationId = conversationId
+                        }
+                        is ApiResult.Error -> {
+                            snackbar.showSnackbar(result.message)
+                            return@launch
+                        }
+                    }
+                }
+                when (val result = api.generateSummary(conversationId, sessionId)) {
+                    is ApiResult.Success -> onFinishConversation(result.data.qrCode.accessToken, institutionTitle)
+                    is ApiResult.Error -> snackbar.showSnackbar(result.message)
+                }
+            } finally {
+                isProcessing = false
+            }
+        }
+    }
+
+    val error = requestError
+    if (error != null) {
+        ConnectionErrorScreen(
+            message = error,
+            onBackClick = {
+                inputText = pendingQuestion?.first.orEmpty()
+                pendingQuestion = null
+                requestError = null
+            },
+            onRetryClick = {
+                val retry = pendingQuestion
+                requestError = null
+                pendingQuestion = null
+                if (retry != null) sendQuestion(retry.first, retry.second)
             }
         )
         return
@@ -125,6 +270,7 @@ fun ChatScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Row(
                 modifier = Modifier
@@ -134,7 +280,10 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     IconButton(onClick = onBackClick) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -146,7 +295,9 @@ fun ChatScreen(
                         text = institutionTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
 
@@ -170,10 +321,8 @@ fun ChatScreen(
 
                     if (messages.size > 1) {
                         TextButton(
-                            onClick = {
-                                id.tunarasa.app.data.session.ActiveConversationCache.update(institutionTitle, messages)
-                                onFinishConversation("note-${System.currentTimeMillis()}")
-                            },
+                            onClick = ::finishConversation,
+                            enabled = !isProcessing && !validationPending,
                             contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
                             Text(
@@ -219,7 +368,7 @@ fun ChatScreen(
 
                         IconButton(
                             onClick = { sendQuestion(inputText) },
-                            enabled = inputText.isNotBlank() && !isProcessing,
+                            enabled = inputText.isNotBlank() && !isProcessing && savedConversationId == null,
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
@@ -289,7 +438,7 @@ fun ChatScreen(
                 )
             }
 
-            if (isProcessing) {
+            if (isProcessing || validationPending) {
                 item {
                     Box(
                         modifier = Modifier
@@ -298,7 +447,7 @@ fun ChatScreen(
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
                         Text(
-                            text = "Asisten sedang mengetik...",
+                            text = if (validationPending) "Menunggu validasi petugas..." else "Sedang memproses...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -403,6 +552,7 @@ private fun ChatBubbleItem(
 
 @Composable
 fun ConnectionErrorScreen(
+    message: String,
     onBackClick: () -> Unit,
     onRetryClick: () -> Unit
 ) {
@@ -461,7 +611,7 @@ fun ConnectionErrorScreen(
                 Spacer(modifier = Modifier.height(28.dp))
 
                 Text(
-                    text = "Koneksi terputus",
+                    text = "Pesan belum berhasil diproses",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -473,7 +623,7 @@ fun ConnectionErrorScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = "Pesan belum terkirim. Pastikan jaringan internet tersedia. Teks yang diketik tetap tersimpan.",
+                    text = message,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth()
@@ -517,35 +667,5 @@ fun ConnectionErrorScreen(
                 }
             }
         }
-    }
-}
-
-private fun buildMockAssistantReply(question: String, institution: String): UiChatMessage {
-    val q = question.lowercase()
-    return when {
-        q.contains("ktp") -> UiChatMessage(
-            id = "bot-${System.currentTimeMillis()}",
-            isUser = false,
-            title = "Syarat pembuatan KTP",
-            content = "Untuk pengajuan KTP-el baru, siapkan dokumen kependudukan sesuai ketentuan $institution. Periksa persyaratan resmi sebelum datang.",
-            sourceLabel = "Sumber dokumen institusi",
-            relatedQuestion = "Bagaimana jadwal pelayanan?"
-        )
-        q.contains("kk") || q.contains("kartu keluarga") -> UiChatMessage(
-            id = "bot-${System.currentTimeMillis()}",
-            isUser = false,
-            title = "Penerbitan Kartu Keluarga",
-            content = "Siapkan fotokopi buku nikah atau kutipan akta perkawinan, KK lama, serta surat pengantar sesuai domisili.",
-            sourceLabel = "Sumber dokumen institusi",
-            relatedQuestion = "Berapa lama proses penerbitan KK?"
-        )
-        else -> UiChatMessage(
-            id = "bot-${System.currentTimeMillis()}",
-            isUser = false,
-            title = "Informasi layanan $institution",
-            content = "Pertanyaan Anda mengenai \"$question\" telah dicatat. Silakan bawa identitas diri (KTP/KK) saat berkunjung ke loket pelayanan.",
-            sourceLabel = "Sumber dokumen institusi",
-            relatedQuestion = "Syarat pembuatan KTP elektronik"
-        )
     }
 }

@@ -1,6 +1,7 @@
 package id.tunarasa.app.data
 
 import android.util.Log
+import id.tunarasa.app.BuildConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -18,6 +19,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.IOException
@@ -91,6 +93,8 @@ class ApiClient(
                     statusCode = response.status.value,
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: HttpRequestTimeoutException) {
             ApiResult.Error(message = "Koneksi timeout, coba lagi.", cause = e)
         } catch (e: IOException) {
@@ -108,6 +112,6 @@ class ApiClient(
 
     companion object {
         // 10.0.2.2 mengarah ke localhost komputer host dari Android Emulator
-        const val DEFAULT_BASE_URL = "http://10.0.2.2:8080"
+        const val DEFAULT_BASE_URL = BuildConfig.API_BASE_URL
     }
 }

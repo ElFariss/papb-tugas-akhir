@@ -26,39 +26,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
+import id.tunarasa.app.data.ApiClient
+import id.tunarasa.app.data.ApiResult
+import id.tunarasa.app.data.NoteResponse
+import id.tunarasa.app.data.PublicChatApi
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.isSuccess
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
-
-@Serializable
-data class NoteData(
-    @SerialName("note_id") val noteId: Int,
-    @SerialName("conversation_id") val conversationId: Int,
-    val content: String,
-    @SerialName("created_at") val createdAt: String,
-    @SerialName("qr_generated_at") val qrGeneratedAt: String = "",
-)
-
-@Serializable
-data class NoteResponse(
-    val note: NoteData,
-    @SerialName("access_token") val accessToken: String,
-    @SerialName("expires_at") val expiresAt: String,
-)
 
 private sealed interface NoteLoadState {
     data object Loading : NoteLoadState
@@ -70,7 +46,7 @@ private sealed interface NoteLoadState {
 @Composable
 fun NoteScreen(
     token: String = "",
-    baseUrl: String = "http://10.0.2.2:8080",
+    baseUrl: String = ApiClient.DEFAULT_BASE_URL,
     onBackClick: () -> Unit = {},
     onBackToHome: () -> Unit = {},
 ) {
@@ -601,57 +577,34 @@ private fun NoteMetadataCard(
     }
 }
 
-private val noteJsonParser = Json {
-    ignoreUnknownKeys = true
-    isLenient = true
-}
-
-private suspend fun fetchNoteByToken(
-    token: String,
-    baseUrl: String,
-): NoteLoadState = withContext(Dispatchers.IO) {
-    if (token.startsWith("demo", ignoreCase = true)) {
-        return@withContext NoteLoadState.Success(sampleDemoNote(token))
-    }
-
-    val client = HttpClient(OkHttp)
-    try {
-        val cleanBase = baseUrl.trimEnd('/')
-        val response = client.get("$cleanBase/api/v1/summary/note/$token") {
-            header(HttpHeaders.Accept, "application/json")
-        }
-
-        when {
-            response.status.isSuccess() -> {
-                val rawBody = response.bodyAsText()
-                val parsed = noteJsonParser.decodeFromString<NoteResponse>(rawBody)
-                NoteLoadState.Success(parsed)
-            }
-            response.status == HttpStatusCode.NotFound -> {
-                NoteLoadState.Error("Catatan tidak ditemukan atau sudah kadaluarsa")
-            }
-            response.status == HttpStatusCode.Forbidden -> {
-                NoteLoadState.Error("Akses ditolak untuk catatan ini")
-            }
-            else -> {
-                NoteLoadState.Error("Gagal mengambil catatan: ${response.status.value}")
+private suspend fun fetchNoteByToken(token: String, baseUrl: String): NoteLoadState {
+    val client = ApiClient(baseUrl = baseUrl, enableLogging = false)
+    return try {
+        when (val result = PublicChatApi(client).getSummary(token)) {
+            is ApiResult.Success -> NoteLoadState.Success(result.data)
+            is ApiResult.Error -> {
+                val message = when (result.statusCode) {
+                    HttpStatusCode.NotFound.value -> "Catatan tidak ditemukan atau sudah kadaluarsa"
+                    HttpStatusCode.Forbidden.value -> "Akses ditolak untuk catatan ini"
+                    else -> result.message
+                }
+                NoteLoadState.Error(message)
             }
         }
-    } catch (e: Exception) {
-        NoteLoadState.Error(e.message ?: "Gagal mengambil catatan")
     } finally {
         client.close()
     }
 }
 
-private fun formatIndonesianTimestamp(rawIso: String): String {
-    if (rawIso.isBlank()) return "-"
+internal fun formatIndonesianTimestamp(rawIso: String?): String {
+    if (rawIso.isNullOrBlank()) return "-"
     val jakartaTz = TimeZone.getTimeZone("Asia/Jakarta")
     val outputFormat = SimpleDateFormat("d MMMM yyyy, HH.mm", Locale.forLanguageTag("id-ID")).apply {
         timeZone = jakartaTz
     }
 
     val normalized = rawIso.trim()
+        .replace(Regex("(\\.\\d{3})\\d+(?=Z|[+-]|$)"), "$1")
         .replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
         .replace(Regex("Z$"), "+0000")
 
@@ -677,20 +630,3 @@ private fun formatIndonesianTimestamp(rawIso: String): String {
 
     return rawIso
 }
-
-private fun sampleDemoNote(token: String): NoteResponse = NoteResponse(
-    note = NoteData(
-        noteId = 1042,
-        conversationId = 88,
-        content = """
-            Ringkasan Layanan Administrasi Kependudukan:
-            1. Pembuatan KTP-el baru tidak dipungut biaya (gratis).
-            2. Dokumen yang dibawa: fotokopi Kartu Keluarga (KK) terbaru dan berusia minimal 17 tahun.
-            3. Perekaman biometrik dilakukan langsung di loket Disdukcapil tanpa memerlukan surat pengantar RT/RW.
-        """.trimIndent(),
-        createdAt = "2026-11-26T10:15:00+07:00",
-        qrGeneratedAt = "2026-11-26T10:16:00+07:00",
-    ),
-    accessToken = token,
-    expiresAt = "2026-11-27T10:16:00+07:00",
-)

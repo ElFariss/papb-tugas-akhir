@@ -86,7 +86,7 @@ fun DashboardScreen(
     var isFeedbackError by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
-    val roleName = currentUser?.role ?: "super_admin"
+    val roleName = currentUser?.role
     val isSuperAdmin = roleName == "super_admin"
 
     fun refreshDashboard() {
@@ -525,22 +525,24 @@ fun DashboardScreen(
                     .semantics { heading() },
             )
 
-            DashboardMenuCard(
-                title = "Antrean Validasi Layanan",
-                subtitle = "Tinjau percakapan pengguna & validasi rekomendasi jawaban AI",
-                badgeText = if (currentMode == DashboardServiceMode.BOT_WITH_ADMIN_VALIDATION) "Aktif" else null,
-                icon = Icons.Outlined.SupportAgent,
-                accentColor = Color(0xFF2563EB),
-                onClick = onNavigateToQueue,
-            )
+            if (isSuperAdmin) {
+                DashboardMenuCard(
+                    title = "Antrean Validasi Layanan",
+                    subtitle = "Tinjau percakapan pengguna & validasi rekomendasi jawaban AI",
+                    badgeText = if (currentMode == DashboardServiceMode.BOT_WITH_ADMIN_VALIDATION) "Aktif" else null,
+                    icon = Icons.Outlined.SupportAgent,
+                    accentColor = Color(0xFF2563EB),
+                    onClick = onNavigateToQueue,
+                )
 
-            DashboardMenuCard(
-                title = "Log Q&A & Evaluasi",
-                subtitle = "Riwayat tanya jawab, tingkat kepercayaan AI, dan waktu respons",
-                icon = Icons.Outlined.QuestionAnswer,
-                accentColor = Color(0xFF7C3AED),
-                onClick = onNavigateToQaLogs,
-            )
+                DashboardMenuCard(
+                    title = "Log Q&A & Evaluasi",
+                    subtitle = "Riwayat tanya jawab, tingkat kepercayaan AI, dan waktu respons",
+                    icon = Icons.Outlined.QuestionAnswer,
+                    accentColor = Color(0xFF7C3AED),
+                    onClick = onNavigateToQaLogs,
+                )
+            }
 
             DashboardMenuCard(
                 title = "Institusi & Dokumen RAG",

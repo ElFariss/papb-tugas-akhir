@@ -14,13 +14,28 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        val configFields = mapOf(
+            "API_BASE_URL" to ("tunarasa.apiBaseUrl" to "http://10.0.2.2:8080"),
+            "SUPABASE_URL" to ("tunarasa.supabaseUrl" to ""),
+            "SUPABASE_PUBLIC_KEY" to ("tunarasa.supabasePublicKey" to ""),
+        )
+        configFields.forEach { (field, setting) ->
+            val (property, fallback) = setting
+            val value = providers.gradleProperty(property).getOrElse(fallback)
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+            buildConfigField("String", field, "\"${value}\"")
+        }
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {

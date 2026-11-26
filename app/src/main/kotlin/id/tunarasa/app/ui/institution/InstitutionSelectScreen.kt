@@ -18,6 +18,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import id.tunarasa.app.data.ApiClient
+import id.tunarasa.app.data.ApiResult
+import id.tunarasa.app.data.PlatformApi
 import id.tunarasa.app.ui.theme.BlueHeroCard
 import id.tunarasa.app.ui.theme.MintBadgeBg
 import id.tunarasa.app.ui.theme.MintBadgeText
@@ -30,21 +33,40 @@ data class InstitutionItem(
     val isPrimaryBadge: Boolean = false
 )
 
-private val sampleInstitutions = listOf(
-    InstitutionItem("dukcapil", "D", "Dukcapil", "KTP, KK, akta kelahiran", isPrimaryBadge = true),
-    InstitutionItem("pelayanan-publik", "P", "Pelayanan publik", "Informasi layanan umum", isPrimaryBadge = false),
-    InstitutionItem("lainnya", "+", "Institusi lainnya", "Pilihan tersedia dari server", isPrimaryBadge = false)
-)
-
 @Composable
 fun InstitutionScreen(
     onBackClick: () -> Unit,
     onSelectInstitution: (InstitutionItem) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    val filteredList = remember(searchQuery) {
-        if (searchQuery.isBlank()) sampleInstitutions
-        else sampleInstitutions.filter {
+    val client = remember { ApiClient() }
+    var institutions by remember { mutableStateOf<List<InstitutionItem>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(client) { onDispose { client.close() } }
+    LaunchedEffect(loadAttempt) {
+        isLoading = true
+        loadError = null
+        when (val result = PlatformApi(client).getInstitutions()) {
+            is ApiResult.Success -> institutions = result.data.map {
+                InstitutionItem(
+                    id = it.slug,
+                    badgeText = it.name.take(1).uppercase(),
+                    name = it.name,
+                    description = if (it.slug == "dukcapil") "KTP, KK, akta kelahiran" else "",
+                    isPrimaryBadge = it.slug == "dukcapil",
+                )
+            }
+            is ApiResult.Error -> loadError = result.message
+        }
+        isLoading = false
+    }
+
+    val filteredList = remember(searchQuery, institutions) {
+        if (searchQuery.isBlank()) institutions
+        else institutions.filter {
             it.name.contains(searchQuery, ignoreCase = true) ||
                 it.description.contains(searchQuery, ignoreCase = true)
         }
@@ -97,6 +119,14 @@ fun InstitutionScreen(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                when {
+                    isLoading -> item { CircularProgressIndicator() }
+                    loadError != null -> item {
+                        Text(loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { loadAttempt++ }) { Text("Coba lagi") }
+                    }
+                    filteredList.isEmpty() -> item { Text("Tidak ada institusi yang ditemukan.") }
+                }
                 items(filteredList, key = { it.id }) { item ->
                     InstitutionCard(
                         item = item,

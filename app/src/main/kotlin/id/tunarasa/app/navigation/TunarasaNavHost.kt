@@ -1,5 +1,6 @@
 package id.tunarasa.app.navigation
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -158,19 +159,26 @@ fun TunarasaNavHost() {
                 onBackClick = { navController.popBackStack() },
                 onSwitchToSibi = { navController.navigate(Routes.sibiTranslator(slug)) },
                 onSwitchToSpeech = { navController.navigate(Routes.speechToText(slug)) },
-                onFinishConversation = { sessionToken ->
-                    navController.navigate("summary/$sessionToken")
+                onFinishConversation = { sessionToken, name ->
+                    navController.navigate("summary/${Uri.encode(sessionToken)}?name=${Uri.encode(name)}")
                 }
             )
         }
 
         composable(
-            route = "summary/{token}",
-            arguments = listOf(navArgument("token") { type = NavType.StringType })
+            route = "summary/{token}?name={name}",
+            arguments = listOf(
+                navArgument("token") { type = NavType.StringType },
+                navArgument("name") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            )
         ) { backStackEntry ->
             val token = backStackEntry.arguments?.getString("token").orEmpty()
             SummaryScreen(
                 token = token,
+                institutionName = backStackEntry.arguments?.getString("name").orEmpty(),
                 onBackToHome = {
                     navController.popBackStack(Routes.WELCOME, inclusive = false)
                 }

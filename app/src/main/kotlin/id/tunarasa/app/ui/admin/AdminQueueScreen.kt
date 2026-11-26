@@ -26,8 +26,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import id.tunarasa.app.data.ApiClient
 import id.tunarasa.app.data.ApiResult
+import id.tunarasa.app.data.AdminChatApi
 import id.tunarasa.app.data.PlatformApi
 import id.tunarasa.app.data.session.SessionStore
+import id.tunarasa.app.ui.summary.formatIndonesianTimestamp
 import id.tunarasa.contracts.ConversationStatus
 import id.tunarasa.contracts.InputMethod
 import id.tunarasa.contracts.ServiceMode
@@ -59,7 +61,6 @@ data class AiSuggestionItem(
     val id: String,
     val content: String,
     val confidence: Float,
-    val sourceHint: String,
 )
 
 data class QueueConversationItem(
@@ -88,19 +89,17 @@ fun AdminQueueScreen(
         SessionStore(context.applicationContext)
     }
 
-    val api = remember(platformApi, sessionStore) {
-        platformApi ?: PlatformApi(
-            ApiClient(
-                tokenProvider = { sessionStore.getAdminToken() }
-            )
-        )
+    val client = remember(sessionStore) {
+        ApiClient(tokenProvider = { sessionStore.getAdminToken() }, enableLogging = false)
     }
+    DisposableEffect(client) { onDispose { client.close() } }
+    val api = remember(platformApi, client) { platformApi ?: PlatformApi(client) }
+    val chatApi = remember(client) { AdminChatApi(client) }
 
-    var adminEmail by remember { mutableStateOf("Petugas Layanan") }
     var serviceMode by remember { mutableStateOf(ServiceMode.BOT_WITH_ADMIN_VALIDATION) }
     var isRefreshing by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf<ConversationStatus?>(null) }
-    var conversations by remember { mutableStateOf(sampleQueueConversations()) }
+    var conversations by remember { mutableStateOf<List<QueueConversationItem>>(emptyList()) }
     var selectedConversationId by remember { mutableStateOf<String?>(null) }
     var replyDraft by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
@@ -127,11 +126,6 @@ fun AdminQueueScreen(
     fun loadQueueData() {
         scope.launch {
             isRefreshing = true
-            val session = sessionStore.getAdminSession()
-            if (!session?.email.isNullOrBlank()) {
-                adminEmail = session!!.email.substringBefore("@")
-            }
-
             when (val configRes = api.getServiceConfig()) {
                 is ApiResult.Success -> {
                     serviceMode = ServiceMode.entries.find {
@@ -143,8 +137,25 @@ fun AdminQueueScreen(
                 }
             }
 
-            // TODO(BE-2): Panggil GET /api/v1/admin/queue dari :backend:realtime-chat
-            // dan petakan hasilnya ke list QueueConversationItem.
+            when (val result = chatApi.getQueue()) {
+                is ApiResult.Success -> {
+                    conversations = result.data.conversations.map { item ->
+                        QueueConversationItem(
+                            id = item.id,
+                            sessionId = item.sessionId,
+                            userName = item.userName,
+                            institutionName = item.institutionName.orEmpty(),
+                            status = ConversationStatus.entries.first { it.wire == item.status },
+                            priority = QueuePriority.entries.firstOrNull { it.name.equals(item.priority, true) }
+                                ?: QueuePriority.NORMAL,
+                            lastMessage = item.lastMessage,
+                            waitMinutes = item.waitTime,
+                            messages = emptyList(),
+                        )
+                    }
+                }
+                is ApiResult.Error -> bannerMessage = result.message
+            }
             isRefreshing = false
         }
     }
@@ -153,10 +164,44 @@ fun AdminQueueScreen(
         loadQueueData()
     }
 
+    suspend fun updateThread(id: String) {
+        when (val result = chatApi.getMessages(id)) {
+            is ApiResult.Success -> {
+                val thread = result.data.messages
+                val draft = thread.lastOrNull { it.type == "llm_recommendation" }
+                conversations = conversations.map { item ->
+                    if (item.id != id) item
+                    else item.copy(
+                        status = ConversationStatus.entries.first { it.wire == result.data.status },
+                        messages = thread.map { message ->
+                            QueueThreadMessage(
+                                id = message.id,
+                                sender = when (message.type) {
+                                    "user" -> QueueSenderRole.USER
+                                    "admin" -> QueueSenderRole.ADMIN
+                                    else -> QueueSenderRole.AI_DRAFT
+                                },
+                                content = message.content,
+                                timestamp = formatIndonesianTimestamp(message.timestamp),
+                                inputMethod = InputMethod.entries.firstOrNull { it.wire == message.inputMethod },
+                                adminName = message.adminName,
+                            )
+                        },
+                        aiSuggestion = draft?.let {
+                            AiSuggestionItem(it.id, it.content, (it.confidence ?: 0) / 100f)
+                        },
+                    )
+                }
+            }
+            is ApiResult.Error -> bannerMessage = result.message
+        }
+    }
+
     fun openConversation(item: QueueConversationItem) {
         selectedConversationId = item.id
         replyDraft = ""
         bannerMessage = null
+        scope.launch { updateThread(item.id) }
     }
 
     fun closeConversationDetail() {
@@ -171,51 +216,46 @@ fun AdminQueueScreen(
 
         scope.launch {
             isSending = true
-            // TODO(BE-2): Kirim balasan ke POST /api/v1/chat/conversations/{id}/messages
-            val newMessage = QueueThreadMessage(
-                id = "msg_${System.currentTimeMillis()}",
-                sender = QueueSenderRole.ADMIN,
-                content = trimmed,
-                timestamp = "Baru saja",
-                adminName = adminEmail,
-            )
-
-            conversations = conversations.map { conv ->
-                if (conv.id == target.id) {
-                    val nextStatus = if (conv.status == ConversationStatus.WAITING) {
-                        ConversationStatus.IN_PROGRESS
-                    } else {
-                        conv.status
-                    }
-                    conv.copy(
-                        status = nextStatus,
-                        lastMessage = trimmed,
-                        messages = conv.messages + newMessage,
-                    )
-                } else {
-                    conv
+            try {
+                val result = when (val claim = chatApi.assign(target.id)) {
+                    is ApiResult.Success -> chatApi.respond(target.id, trimmed, trimmed == target.aiSuggestion?.content?.trim())
+                    is ApiResult.Error -> claim
                 }
+                when (result) {
+                    is ApiResult.Success -> {
+                        replyDraft = ""
+                        bannerMessage = "Tanggapan terkirim ke pengguna."
+                        updateThread(target.id)
+                    }
+                    is ApiResult.Error -> bannerMessage = result.message
+                }
+            } finally {
+                isSending = false
             }
-
-            replyDraft = ""
-            isSending = false
-            bannerMessage = "Tanggapan terkirim ke pengguna."
         }
     }
 
     fun resolveSelectedConversation() {
         val target = selectedConversation ?: return
+        if (isSending) return
         scope.launch {
-            // TODO(BE-2): Panggil POST /api/v1/chat/conversations/{id}/resolve
-            conversations = conversations.map { conv ->
-                if (conv.id == target.id) {
-                    conv.copy(status = ConversationStatus.RESOLVED)
-                } else {
-                    conv
+            isSending = true
+            try {
+                val result = when (val claim = chatApi.assign(target.id)) {
+                    is ApiResult.Success -> chatApi.resolve(target.id)
+                    is ApiResult.Error -> claim
                 }
+                when (result) {
+                    is ApiResult.Success -> {
+                        closeConversationDetail()
+                        bannerMessage = "Percakapan dengan ${target.userName} ditandai selesai."
+                        loadQueueData()
+                    }
+                    is ApiResult.Error -> bannerMessage = result.message
+                }
+            } finally {
+                isSending = false
             }
-            bannerMessage = "Percakapan dengan ${target.userName} ditandai selesai."
-            closeConversationDetail()
         }
     }
 
@@ -224,6 +264,7 @@ fun AdminQueueScreen(
             conversation = selectedConversation,
             replyDraft = replyDraft,
             isSending = isSending,
+            bannerMessage = bannerMessage,
             onReplyDraftChange = { replyDraft = it },
             onUseSuggestion = { suggestion ->
                 replyDraft = suggestion.content
@@ -611,6 +652,7 @@ private fun ConversationValidationDetail(
     conversation: QueueConversationItem,
     replyDraft: String,
     isSending: Boolean,
+    bannerMessage: String?,
     onReplyDraftChange: (String) -> Unit,
     onUseSuggestion: (AiSuggestionItem) -> Unit,
     onSendReply: () -> Unit,
@@ -653,6 +695,7 @@ private fun ConversationValidationDetail(
                     if (!isResolved) {
                         FilledTonalButton(
                             onClick = onResolveClick,
+                            enabled = !isSending,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.padding(end = 8.dp),
                         ) {
@@ -737,6 +780,10 @@ private fun ConversationValidationDetail(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (bannerMessage != null) {
+                item { Text(bannerMessage, color = MaterialTheme.colorScheme.onSurface) }
+            }
+
             // Kartu Rekomendasi AI (LLM Suggestion)
             if (conversation.aiSuggestion != null && !isResolved) {
                 item {
@@ -752,7 +799,7 @@ private fun ConversationValidationDetail(
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.End,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Row(
@@ -791,12 +838,6 @@ private fun ConversationValidationDetail(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = "Sumber: ${conversation.aiSuggestion.sourceHint}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF92400E),
-                                    modifier = Modifier.weight(1f),
-                                )
                                 OutlinedButton(
                                     onClick = { onUseSuggestion(conversation.aiSuggestion) },
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -915,96 +956,3 @@ private fun InputMethod.displayLabel(): String = when (this) {
     InputMethod.SPEECH -> "Suara"
     InputMethod.GESTURE -> "Isyarat SIBI"
 }
-
-private fun sampleQueueConversations(): List<QueueConversationItem> = listOf(
-    QueueConversationItem(
-        id = "conv_101",
-        sessionId = "sess_demo_01",
-        userName = "Pengguna #101",
-        institutionName = "Disdukcapil Kota Malang",
-        status = ConversationStatus.WAITING,
-        priority = QueuePriority.HIGH,
-        lastMessage = "SYARAT BUAT KTP BARU APA SAJA",
-        waitMinutes = 3,
-        messages = listOf(
-            QueueThreadMessage(
-                id = "m1",
-                sender = QueueSenderRole.USER,
-                content = "SYARAT BUAT KTP BARU APA SAJA",
-                timestamp = "10:12",
-                inputMethod = InputMethod.GESTURE,
-            ),
-        ),
-        aiSuggestion = AiSuggestionItem(
-            id = "sug_1",
-            content = "Untuk pembuatan KTP-el baru, silakan menyiapkan: (1) Fotokopi Kartu Keluarga (KK) terbaru, (2) Berusia minimal 17 tahun, dan (3) Melakukan perekaman biometrik langsung di loket Disdukcapil tanpa surat pengantar RT/RW.",
-            confidence = 0.91f,
-            sourceHint = "SOP_Layanan_KTP_2025.pdf",
-        ),
-    ),
-    QueueConversationItem(
-        id = "conv_102",
-        sessionId = "sess_demo_02",
-        userName = "Pengguna #102",
-        institutionName = "Disdukcapil Kota Malang",
-        status = ConversationStatus.IN_PROGRESS,
-        priority = QueuePriority.NORMAL,
-        lastMessage = "Baik, dokumen akta lahir anak saya sudah lengkap.",
-        waitMinutes = 9,
-        messages = listOf(
-            QueueThreadMessage(
-                id = "m2",
-                sender = QueueSenderRole.USER,
-                content = "Berapa lama proses pembuatan akta kelahiran bayi baru lahir?",
-                timestamp = "10:04",
-                inputMethod = InputMethod.TEXT,
-            ),
-            QueueThreadMessage(
-                id = "m3",
-                sender = QueueSenderRole.ADMIN,
-                content = "Proses penerbitan akta kelahiran membutuhkan waktu 1–3 hari kerja setelah berkas dinyatakan lengkap.",
-                timestamp = "10:06",
-                adminName = "Admin Loket 2",
-            ),
-            QueueThreadMessage(
-                id = "m4",
-                sender = QueueSenderRole.USER,
-                content = "Baik, dokumen akta lahir anak saya sudah lengkap.",
-                timestamp = "10:07",
-                inputMethod = InputMethod.SPEECH,
-            ),
-        ),
-        aiSuggestion = AiSuggestionItem(
-            id = "sug_2",
-            content = "Silakan menuju loket verifikasi berkas dengan membawa surat keterangan lahir asli dari rumah sakit/bidan, buku nikah orang tua, dan KTP elektronik kedua orang tua.",
-            confidence = 0.86f,
-            sourceHint = "Panduan_Akta_Kelahiran.pdf",
-        ),
-    ),
-    QueueConversationItem(
-        id = "conv_103",
-        sessionId = "sess_demo_03",
-        userName = "Pengguna #103",
-        institutionName = "RSUD Dr. Saiful Anwar",
-        status = ConversationStatus.RESOLVED,
-        priority = QueuePriority.LOW,
-        lastMessage = "Terima kasih atas informasinya.",
-        waitMinutes = 24,
-        messages = listOf(
-            QueueThreadMessage(
-                id = "m5",
-                sender = QueueSenderRole.USER,
-                content = "JADWAL POLI THT HARI INI JAM BERAPA",
-                timestamp = "09:45",
-                inputMethod = InputMethod.GESTURE,
-            ),
-            QueueThreadMessage(
-                id = "m6",
-                sender = QueueSenderRole.ADMIN,
-                content = "Poli THT buka Senin–Jumat pukul 08.00–13.00 WIB. Pendaftaran loket ditutup pukul 11.30 WIB.",
-                timestamp = "09:47",
-                adminName = "Admin RSUD",
-            ),
-        ),
-    ),
-)

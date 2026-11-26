@@ -29,16 +29,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import id.tunarasa.app.data.session.ActiveConversationCache
+import id.tunarasa.app.data.ApiClient
+import id.tunarasa.app.data.ApiResult
+import id.tunarasa.app.data.PublicChatApi
 import id.tunarasa.app.ui.theme.BlueHeroCard
 import id.tunarasa.app.ui.theme.MintBadgeBg
 import id.tunarasa.app.ui.theme.MintBadgeText
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 data class UiSummaryNote(
     val noteId: String,
@@ -52,6 +49,7 @@ data class UiSummaryNote(
 @Composable
 fun SummaryScreen(
     token: String,
+    institutionName: String,
     onBackToHome: () -> Unit
 ) {
     val context = LocalContext.current
@@ -60,11 +58,29 @@ fun SummaryScreen(
 
     var isLoading by remember { mutableStateOf(true) }
     var noteState by remember { mutableStateOf<UiSummaryNote?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val client = remember { ApiClient(enableLogging = false) }
 
-    LaunchedEffect(token) {
+    DisposableEffect(client) { onDispose { client.close() } }
+    LaunchedEffect(token, loadAttempt) {
         isLoading = true
-        delay(450) // Simulasi pengambilan GET /api/v1/summary/note/{token}
-        noteState = buildSummaryFromSession(token)
+        loadError = null
+        noteState = null
+        when (val result = PublicChatApi(client).getSummary(token)) {
+            is ApiResult.Success -> {
+                val summary = result.data
+                noteState = UiSummaryNote(
+                    noteId = summary.note.noteId.toString(),
+                    institutionName = institutionName,
+                    createdAt = formatIndonesianTimestamp(summary.note.createdAt),
+                    expiresAt = formatIndonesianTimestamp(summary.expiresAt),
+                    accessToken = summary.accessToken,
+                    content = summary.note.content,
+                )
+            }
+            is ApiResult.Error -> loadError = result.message
+        }
         isLoading = false
     }
 
@@ -96,7 +112,7 @@ fun SummaryScreen(
                     )
                 }
 
-                Box(
+                if (noteState != null) Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .background(MintBadgeBg)
@@ -220,7 +236,19 @@ fun SummaryScreen(
             return@Scaffold
         }
 
-        val note = noteState ?: return@Scaffold
+        val note = noteState
+        if (note == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(innerPadding).padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = { loadAttempt++ }) { Text("Coba lagi") }
+                }
+            }
+            return@Scaffold
+        }
 
         Column(
             modifier = Modifier
@@ -373,7 +401,7 @@ fun SummaryScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "Berlaku hingga ${note.expiresAt} (7 hari). Simpan token atau unduh PDF untuk ditunjukkan ke petugas loket.",
+                        text = "Berlaku hingga ${note.expiresAt}. Simpan token atau unduh PDF untuk ditunjukkan ke petugas loket.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -381,32 +409,4 @@ fun SummaryScreen(
             }
         }
     }
-}
-
-private fun buildSummaryFromSession(token: String): UiSummaryNote {
-    val formatter = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("id", "ID"))
-    val now = Date()
-    val expiryCal = Calendar.getInstance().apply {
-        time = now
-        add(Calendar.DAY_OF_YEAR, 7)
-    }
-
-    val cachedMessages = ActiveConversationCache.messages.filter { it.id != "welcome-msg" }
-    val summaryBody = if (cachedMessages.isNotEmpty()) {
-        cachedMessages.joinToString("\n\n") { msg ->
-            if (msg.isUser) "Pertanyaan Pengguna:\n${msg.content}"
-            else "Jawaban Asisten:\n${msg.content}"
-        }
-    } else {
-        "Sesi komunikasi dengan ${ActiveConversationCache.institutionName} telah selesai. Unduh dokumen PDF untuk menyimpan catatan sesi Anda."
-    }
-
-    return UiSummaryNote(
-        noteId = token.takeLast(6).uppercase(),
-        institutionName = ActiveConversationCache.institutionName,
-        createdAt = formatter.format(now),
-        expiresAt = formatter.format(expiryCal.time),
-        accessToken = token,
-        content = summaryBody
-    )
 }

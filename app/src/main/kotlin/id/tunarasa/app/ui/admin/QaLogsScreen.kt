@@ -27,20 +27,25 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import id.tunarasa.app.data.AdminChatApi
 import id.tunarasa.app.data.ApiClient
 import id.tunarasa.app.data.ApiResult
 import id.tunarasa.app.data.PlatformApi
 import id.tunarasa.app.data.session.SessionStore
+import id.tunarasa.app.ui.summary.formatIndonesianTimestamp
 import id.tunarasa.contracts.InputMethod
 import id.tunarasa.contracts.ServiceMode
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
-private enum class QaDateRangeFilter(val wire: String, val label: String) {
-    ONE_HOUR("1h", "1 Jam"),
-    TWENTY_FOUR_HOURS("24h", "24 Jam"),
-    SEVEN_DAYS("7d", "7 Hari"),
-    THIRTY_DAYS("30d", "30 Hari"),
+private enum class QaDateRangeFilter(val wire: String, val label: String, val hours: Long) {
+    ONE_HOUR("1h", "1 Jam", 1),
+    TWENTY_FOUR_HOURS("24h", "24 Jam", 24),
+    SEVEN_DAYS("7d", "7 Hari", 7 * 24L),
+    THIRTY_DAYS("30d", "30 Hari", 30 * 24L),
 }
 
 private enum class QaResponderFilter(val wire: String?, val label: String) {
@@ -66,7 +71,7 @@ data class QaLogEntry(
     val adminNote: String? = null,
     val isActiveSession: Boolean = false,
     val createdAtLabel: String,
-    val dateBucket: String, // "1h" | "24h" | "7d" | "30d"
+    val evaluationScore: Int?,
 )
 
 data class LlmEvaluationMetric(
@@ -76,13 +81,6 @@ data class LlmEvaluationMetric(
     val isHealthy: Boolean,
 )
 
-data class LlmOptimizationRecommendation(
-    val id: String,
-    val severity: String, // "Tinggi" | "Sedang" | "Info"
-    val title: String,
-    val detail: String,
-    val actionHint: String,
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,25 +91,23 @@ fun QaLogsScreen(
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-    val scope = rememberCoroutineScope()
 
     val sessionStore = remember(context) {
         SessionStore(context.applicationContext)
     }
 
-    val api = remember(platformApi, sessionStore) {
-        platformApi ?: PlatformApi(
-            ApiClient(
-                tokenProvider = { sessionStore.getAdminToken() },
-            )
-        )
+    val client = remember(sessionStore) {
+        ApiClient(tokenProvider = { sessionStore.getAdminToken() }, enableLogging = false)
     }
+    DisposableEffect(client) { onDispose { client.close() } }
+    val api = remember(platformApi, client) { platformApi ?: PlatformApi(client) }
+    val chatApi = remember(client) { AdminChatApi(client) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var isRefreshing by remember { mutableStateOf(false) }
     var activeServiceMode by remember { mutableStateOf(ServiceMode.FULL_LLM_BOT) }
 
-    var logs by remember { mutableStateOf(sampleQaLogEntries()) }
+    var filteredLogs by remember { mutableStateOf<List<QaLogEntry>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedDateRange by remember { mutableStateOf(QaDateRangeFilter.SEVEN_DAYS) }
     var selectedResponder by remember { mutableStateOf(QaResponderFilter.ALL) }
@@ -120,36 +116,11 @@ fun QaLogsScreen(
     var inspectedLog by remember { mutableStateOf<QaLogEntry?>(null) }
     var bannerMessage by remember { mutableStateOf<String?>(null) }
 
-    val filteredLogs = remember(
-        logs,
-        searchQuery,
-        selectedDateRange,
-        selectedResponder,
-        selectedModeFilter,
-    ) {
-        val q = searchQuery.trim().lowercase()
-        logs.filter { entry ->
-            val matchesQuery = q.isEmpty() ||
-                entry.question.lowercase().contains(q) ||
-                entry.answer.lowercase().contains(q) ||
-                entry.sessionId.lowercase().contains(q) ||
-                entry.institutionName.lowercase().contains(q)
-
-            val matchesResponder = selectedResponder.wire == null ||
-                entry.respondedBy.equals(selectedResponder.wire, ignoreCase = true)
-
-            val matchesMode = selectedModeFilter == null || entry.serviceMode == selectedModeFilter
-
-            val matchesRange = when (selectedDateRange) {
-                QaDateRangeFilter.ONE_HOUR -> entry.dateBucket == "1h"
-                QaDateRangeFilter.TWENTY_FOUR_HOURS -> entry.dateBucket in listOf("1h", "24h")
-                QaDateRangeFilter.SEVEN_DAYS -> entry.dateBucket in listOf("1h", "24h", "7d")
-                QaDateRangeFilter.THIRTY_DAYS -> true
-            }
-
-            matchesQuery && matchesResponder && matchesMode && matchesRange
-        }
+    var refreshAttempt by remember { mutableIntStateOf(0) }
+    var page by remember(searchQuery, selectedDateRange, selectedResponder, selectedModeFilter, refreshAttempt) {
+        mutableIntStateOf(1)
     }
+    var hasNextPage by remember { mutableStateOf(false) }
 
     val avgConfidencePercent = remember(filteredLogs) {
         if (filteredLogs.isEmpty()) 0f
@@ -178,26 +149,55 @@ fun QaLogsScreen(
         }
     }
 
-    fun refreshLogs() {
-        scope.launch {
-            isRefreshing = true
-            when (val configRes = api.getServiceConfig()) {
-                is ApiResult.Success -> {
-                    activeServiceMode = ServiceMode.entries.find {
-                        it.wire == configRes.data.serviceMode
-                    } ?: ServiceMode.FULL_LLM_BOT
-                }
-                is ApiResult.Error -> Unit
+    LaunchedEffect(refreshAttempt) {
+        when (val config = api.getServiceConfig()) {
+            is ApiResult.Success -> {
+                activeServiceMode = ServiceMode.entries.firstOrNull { it.wire == config.data.serviceMode }
+                    ?: ServiceMode.FULL_LLM_BOT
             }
-
-            // TODO(BE-2): Panggil GET /api/v1/admin/qa-logs dari :backend:realtime-chat
-            // dengan parameter page, limit, search, respondedBy, serviceMode, dan dateRange.
-            isRefreshing = false
+            is ApiResult.Error -> Unit
         }
     }
 
-    LaunchedEffect(Unit) {
-        refreshLogs()
+    LaunchedEffect(searchQuery, selectedDateRange, selectedResponder, selectedModeFilter, refreshAttempt, page) {
+        isRefreshing = true
+        hasNextPage = false
+        if (page == 1) filteredLogs = emptyList()
+        bannerMessage = null
+        delay(250)
+        val dateFrom = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(System.currentTimeMillis() - selectedDateRange.hours * 3_600_000L))
+        when (val result = chatApi.getQaLogs(
+            dateFrom, searchQuery.trim(), selectedResponder.wire, selectedModeFilter?.wire, page,
+        )) {
+            is ApiResult.Success -> {
+                filteredLogs = filteredLogs + result.data.data.qaLogs.mapNotNull { row ->
+                    val mode = ServiceMode.entries.firstOrNull { it.wire == row.serviceMode }
+                        ?: return@mapNotNull null
+                    QaLogEntry(
+                        id = row.id,
+                        sessionId = row.conversation.sessionId.orEmpty(),
+                        institutionName = row.institutionName.orEmpty(),
+                        userName = row.conversation.sessionId?.takeLast(8).orEmpty(),
+                        question = row.question,
+                        answer = row.answer,
+                        confidence = (row.confidence ?: 0) / 100f,
+                        responseTimeSeconds = (row.responseTime ?: 0) / 1_000f,
+                        serviceMode = mode,
+                        respondedBy = row.respondedBy,
+                        inputMethod = InputMethod.entries.firstOrNull { it.wire == row.inputMethod }
+                            ?: if (row.gestureInput != null) InputMethod.GESTURE else InputMethod.TEXT,
+                        isActiveSession = row.conversation.status in setOf("active", "waiting", "in_progress"),
+                        createdAtLabel = formatIndonesianTimestamp(row.createdAt),
+                        evaluationScore = row.evaluationScore,
+                    )
+                }
+                hasNextPage = result.data.data.pagination.hasNextPage
+            }
+            is ApiResult.Error -> bannerMessage = result.message
+        }
+        isRefreshing = false
     }
 
     // BottomSheet Detail Percakapan & Log Q&A
@@ -385,7 +385,7 @@ fun QaLogsScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { refreshLogs() },
+                        onClick = { refreshAttempt++ },
                         enabled = !isRefreshing,
                     ) {
                         Icon(
@@ -704,35 +704,31 @@ fun QaLogsScreen(
                                 onClick = { inspectedLog = entry },
                             )
                         }
+                        if (hasNextPage) item {
+                            TextButton(onClick = { page++ }, enabled = !isRefreshing) { Text("Tampilkan lagi") }
+                        }
                     }
                 } else {
                     // Tab 1: Evaluasi LLM & Rekomendasi DeepEval
                     item {
                         Text(
-                            text = "Metrik Evaluasi Kualitas RAG (DeepEval)",
+                            text = "Skor Evaluasi RAG",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.semantics { heading() },
                         )
                     }
 
-                    items(sampleEvaluationMetrics(), key = { it.name }) { metric ->
-                        EvaluationMetricCard(metric = metric)
-                    }
-
-                    item {
-                        Text(
-                            text = "Rekomendasi Peningkatan Knowledge Base",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .padding(top = 4.dp)
-                                .semantics { heading() },
-                        )
-                    }
-
-                    items(sampleOptimizationRecommendations(), key = { it.id }) { rec ->
-                        OptimizationRecommendationCard(recommendation = rec)
+                    val scores = filteredLogs.mapNotNull { it.evaluationScore }
+                    if (scores.isEmpty()) {
+                        item { Text("Belum ada skor evaluasi untuk log yang dimuat.") }
+                    } else {
+                        val average = scores.average().toInt()
+                        item {
+                            EvaluationMetricCard(
+                                LlmEvaluationMetric("Skor rata-rata", average, "${scores.size} log dievaluasi", average >= 80),
+                            )
+                        }
                     }
                 }
 
@@ -1019,72 +1015,6 @@ private fun EvaluationMetricCard(metric: LlmEvaluationMetric) {
     }
 }
 
-@Composable
-private fun OptimizationRecommendationCard(recommendation: LlmOptimizationRecommendation) {
-    val (bg, fg) = when (recommendation.severity) {
-        "Tinggi" -> Pair(Color(0xFFFEE2E2), Color(0xFFB91C1C))
-        "Sedang" -> Pair(Color(0xFFFEF3C7), Color(0xFFB45309))
-        else -> Pair(Color(0xFFDBEAFE), Color(0xFF1D4ED8))
-    }
-
-    ElevatedCard(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = bg,
-                ) {
-                    Text(
-                        text = recommendation.severity,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = fg,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
-                Text(
-                    text = recommendation.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            Text(
-                text = recommendation.detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = "Saran Tindak Lanjut: ${recommendation.actionHint}",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(10.dp),
-                )
-            }
-        }
-    }
-}
 
 private fun InputMethod.labelId(): String = when (this) {
     InputMethod.TEXT -> "Teks"
@@ -1096,116 +1026,3 @@ private fun ServiceMode.labelId(): String = when (this) {
     ServiceMode.FULL_LLM_BOT -> "Full LLM Bot"
     ServiceMode.BOT_WITH_ADMIN_VALIDATION -> "Bot + Validasi Admin"
 }
-
-private fun sampleQaLogEntries(): List<QaLogEntry> = listOf(
-    QaLogEntry(
-        id = "qa_01",
-        sessionId = "sess_88a1",
-        institutionName = "Disdukcapil Kota Surabaya",
-        userName = "Pengguna #204",
-        question = "SYARAT PERPANJANG KTP RUSAK APA SAJA",
-        answer = "Untuk penggantian KTP-el yang rusak, silakan membawa fisik KTP-el lama yang rusak dan fotokopi Kartu Keluarga (KK) terbaru ke loket pelayanan tanpa perlu surat pengantar RT/RW.",
-        confidence = 0.94f,
-        responseTimeSeconds = 1.2f,
-        serviceMode = ServiceMode.FULL_LLM_BOT,
-        respondedBy = "llm",
-        inputMethod = InputMethod.GESTURE,
-        contextSource = "SOP_Administrasi_Kependudukan_2026.pdf (Hal. 4)",
-        isActiveSession = true,
-        createdAtLabel = "15 mnt lalu",
-        dateBucket = "1h",
-    ),
-    QaLogEntry(
-        id = "qa_02",
-        sessionId = "sess_88a2",
-        institutionName = "Disdukcapil Kota Surabaya",
-        userName = "Pengguna #205",
-        question = "Apakah pembuatan akta kelahiran anak kedua dikenakan biaya?",
-        answer = "Seluruh pengurusan dokumen administrasi kependudukan termasuk penerbitan Akta Kelahiran adalah gratis (Rp 0) sesuai ketentuan perundang-undangan.",
-        confidence = 0.91f,
-        responseTimeSeconds = 1.8f,
-        serviceMode = ServiceMode.BOT_WITH_ADMIN_VALIDATION,
-        respondedBy = "admin",
-        adminName = "Petugas Loket 1",
-        inputMethod = InputMethod.TEXT,
-        contextSource = "Standar_Pelayanan_Akta_Capil.pdf (Hal. 2)",
-        adminNote = "Divalidasi petugas sebelum dikirim ke pengguna.",
-        isActiveSession = false,
-        createdAtLabel = "3 jam lalu",
-        dateBucket = "24h",
-    ),
-    QaLogEntry(
-        id = "qa_03",
-        sessionId = "sess_88a3",
-        institutionName = "RSUD Dr. Soetomo",
-        userName = "Pengguna #198",
-        question = "Jadwal pendaftaran pasien BPJS poli saraf hari Jumat sampai jam berapa?",
-        answer = "Pendaftaran rawat jalan poli spesialis pada hari Jumat dibuka pukul 07.00 hingga 10.30 WIB. Pastikan membawa surat rujukan FKTP yang masih berlaku.",
-        confidence = 0.78f,
-        responseTimeSeconds = 2.4f,
-        serviceMode = ServiceMode.BOT_WITH_ADMIN_VALIDATION,
-        respondedBy = "admin",
-        adminName = "Admin Informasi RS",
-        inputMethod = InputMethod.SPEECH,
-        contextSource = "Jadwal_Poliklinik_Rawat_Jalan.txt",
-        adminNote = "Jam tutup Jumat diperjelas dari 11.00 menjadi 10.30 WIB.",
-        isActiveSession = false,
-        createdAtLabel = "2 hari lalu",
-        dateBucket = "7d",
-    ),
-    QaLogEntry(
-        id = "qa_04",
-        sessionId = "sess_88a4",
-        institutionName = "RSUD Dr. Soetomo",
-        userName = "Pengguna #174",
-        question = "LOKASI LOKET INFORMASI DISABILITAS DI GEDUNG MANA",
-        answer = "Loket layanan pendampingan disabilitas berada di Lobi Utama Gedung Rawat Jalan Lantai 1, tepat di sebelah pintu masuk utama.",
-        confidence = 0.66f,
-        responseTimeSeconds = 2.9f,
-        serviceMode = ServiceMode.FULL_LLM_BOT,
-        respondedBy = "llm",
-        inputMethod = InputMethod.GESTURE,
-        contextSource = "Denah_Layanan_Publik_RS.pdf (Hal. 1)",
-        isActiveSession = false,
-        createdAtLabel = "12 hari lalu",
-        dateBucket = "30d",
-    ),
-)
-
-private fun sampleEvaluationMetrics(): List<LlmEvaluationMetric> = listOf(
-    LlmEvaluationMetric(
-        name = "Faithfulness (Kesesuaian Dokumen)",
-        scorePercent = 92,
-        description = "Mengukur sejauh mana jawaban AI berlandaskan dokumen RAG institusi tanpa menambah klaim di luar sumber.",
-        isHealthy = true,
-    ),
-    LlmEvaluationMetric(
-        name = "Answer Relevancy (Relevansi Jawaban)",
-        scorePercent = 88,
-        description = "Mengukur ketepatan jawaban dalam merespons inti pertanyaan pengguna Tuli maupun dengar.",
-        isHealthy = true,
-    ),
-    LlmEvaluationMetric(
-        name = "Contextual Precision (Ketepatan Konteks)",
-        scorePercent = 76,
-        description = "Mengukur akurasi potongan dokumen yang diambil dari vector store untuk pertanyaan spesifik lokasi/jadwal.",
-        isHealthy = false,
-    ),
-)
-
-private fun sampleOptimizationRecommendations(): List<LlmOptimizationRecommendation> = listOf(
-    LlmOptimizationRecommendation(
-        id = "rec_1",
-        severity = "Tinggi",
-        title = "Perbarui dokumen denah & aksesibilitas gedung",
-        detail = "Pertanyaan terkait lokasi loket disabilitas memiliki skor keyakinan di bawah 70% karena informasi ruangan tersebar di beberapa halaman PDF.",
-        actionHint = "Unggah ringkasan lokasi loket dan akses kursi roda dalam satu file TXT terstruktur pada menu Institusi & File RAG.",
-    ),
-    LlmOptimizationRecommendation(
-        id = "rec_2",
-        severity = "Sedang",
-        title = "Tambahkan variasi frasa ringkas hasil transkripsi SIBI",
-        detail = "Input dari penerjemah gestur SIBI cenderung menggunakan struktur kata kunci singkat tanpa imbuhan.",
-        actionHint = "Sertakan daftar kata kunci layanan utama di bagian atas setiap dokumen panduan institusi.",
-    ),
-)
