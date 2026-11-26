@@ -1,5 +1,7 @@
 package id.tunarasa.backend.platform.admin
 
+import org.jetbrains.exposed.v1.core.eq
+
 import id.tunarasa.backend.platform.auth.authorizeRoles
 import id.tunarasa.backend.platform.auth.userPrincipal
 import id.tunarasa.backend.platform.db.AdminInvitationsTable
@@ -19,11 +21,11 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import kotlinx.serialization.Serializable
-import org.jetbrains.exposed.sql.JoinType
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID

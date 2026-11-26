@@ -9,7 +9,11 @@ import id.tunarasa.backend.platform.health.HealthRoutes
 import id.tunarasa.backend.platform.institutions.InstitutionRoutes
 import id.tunarasa.backend.platform.institutions.RagUploadRoutes
 import id.tunarasa.backend.platform.middleware.RateLimitingPlugin
-import id.tunarasa.backend.ragllm.DefaultRagLlmService
+import id.tunarasa.backend.chat.AdminDirectory
+import id.tunarasa.backend.chat.AdminPrincipal
+import id.tunarasa.backend.chat.AdminTokenVerifier
+import id.tunarasa.backend.chat.ChatDependencies
+import id.tunarasa.backend.chat.chatModule
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
@@ -60,7 +64,7 @@ fun main() {
 }
 
 fun Application.module() {
-    val ragLlmService = DefaultRagLlmService()
+    val ragLlmService = createRagLlmService()
     val appPrometheusRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
 
     // Prometheus Metrics
@@ -134,4 +138,27 @@ fun Application.module() {
         InstitutionRoutes.register(this)
         RagUploadRoutes.register(this, ragLlmService)
     }
+
+    chatModule(
+        ChatDependencies(
+            db = org.jetbrains.exposed.v1.jdbc.Database.connect(DatabaseFactory.pooledDataSource()),
+            ragLlm = ragLlmService,
+            adminAuth = AdminTokenVerifier { token ->
+                val principal = SupabaseJwtVerifier.resolvePrincipal(token)
+                if (principal == null || principal.roleName != "super_admin") {
+                    null
+                } else {
+                    DatabaseFactory.chatUserId(principal.userId)?.let { userId ->
+                        AdminPrincipal(
+                            userId = userId,
+                            email = principal.email,
+                            fullName = principal.fullName,
+                            role = "superadmin",
+                        )
+                    }
+                }
+            },
+            adminDirectory = AdminDirectory(DatabaseFactory::chatAdminNames),
+        ),
+    )
 }

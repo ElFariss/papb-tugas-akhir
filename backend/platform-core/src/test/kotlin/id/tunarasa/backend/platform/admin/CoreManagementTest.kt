@@ -1,14 +1,16 @@
 package id.tunarasa.backend.platform.admin
 
+import org.jetbrains.exposed.v1.core.eq
+
 import id.tunarasa.backend.platform.db.AdminInvitationsTable
 import id.tunarasa.backend.platform.db.AppSettingsTable
 import id.tunarasa.backend.platform.db.DatabaseFactory
 import id.tunarasa.backend.platform.db.InstitutionsTable
 import id.tunarasa.backend.platform.db.UsersTable
 import kotlinx.coroutines.runBlocking
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.BeforeClass

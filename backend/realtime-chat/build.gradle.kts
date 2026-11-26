@@ -14,10 +14,7 @@ kotlin {
     }
 }
 
-// Pinned here (not in gradle/libs.versions.toml, which is shared and needs approval).
-// Move to the catalog once BE-1 settles the framework / version policy.
-val ktorVersion = "3.6.2"
-val exposedVersion = "1.6.1"
+val ktorVersion = libs.versions.ktor.get()
 
 dependencies {
     implementation(project(":contracts"))
@@ -26,14 +23,14 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     // Ktor server (engine is owned by :backend:server)
-    api("io.ktor:ktor-server-core:$ktorVersion")
+    api(libs.ktor.server.core)
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
     implementation("io.ktor:ktor-server-sse:$ktorVersion")
 
     // Exposed (Database is part of the public ChatDependencies surface)
-    api("org.jetbrains.exposed:exposed-core:$exposedVersion")
-    api("org.jetbrains.exposed:exposed-jdbc:$exposedVersion")
-    implementation("org.jetbrains.exposed:exposed-java-time:$exposedVersion")
+    api(libs.exposed.core)
+    api(libs.exposed.jdbc)
+    implementation(libs.exposed.java.time)
 
     // QR / PDF
     implementation("com.google.zxing:core:3.5.4")

@@ -7,6 +7,9 @@ import io.ktor.server.auth.AuthenticationChecked
 import io.ktor.server.auth.principal
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.RouteSelector
+import io.ktor.server.routing.RouteSelectorEvaluation
+import io.ktor.server.routing.RoutingResolveContext
 
 fun ApplicationCall.userPrincipal(): UserPrincipal? = principal<UserPrincipal>()
 
@@ -53,8 +56,17 @@ val RoleAuthorizationPlugin = createRouteScopedPlugin(
  * Route Extension for Role-Based Access Control (RBAC).
  */
 fun Route.authorizeRoles(vararg allowedRoles: String, build: Route.() -> Unit) {
-    install(RoleAuthorizationPlugin) {
+    // Each call needs its own route node: multiple guards commonly share the
+    // same URL prefix, and installing a route-scoped plugin on that parent
+    // causes Ktor to reject the duplicate plugin at application startup.
+    val guardedRoute = createChild(object : RouteSelector() {
+        override suspend fun evaluate(
+            context: RoutingResolveContext,
+            segmentIndex: Int,
+        ): RouteSelectorEvaluation = RouteSelectorEvaluation.Transparent
+    })
+    guardedRoute.install(RoleAuthorizationPlugin) {
         this.roles = allowedRoles.toList()
     }
-    build()
+    guardedRoute.build()
 }

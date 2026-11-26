@@ -1,4 +1,5 @@
--- BE-2. Anonymous / admin session rows. Active-count tracking itself lives in the ActiveSessionStore (Redis).
+-- BE-2. Numeric users.user_id is a surrogate for the UUID in users.id.
+-- Active-count tracking itself lives in the ActiveSessionStore (Redis).
 CREATE TABLE IF NOT EXISTS sessions (
     session_id           SERIAL PRIMARY KEY,
     anonymous_session_id VARCHAR(255),

@@ -41,6 +41,22 @@ class DefaultRagLlmService internal constructor(
         ChatCompletionsClient.configured(chatBaseUrl, chatApiKey, chatModel),
     )
 
+    constructor(
+        documentSource: RagDocumentSource,
+        completedDocuments: CompletedRagDocuments,
+        pineconeApiKey: String,
+        pineconeIndexUrl: String,
+        pineconeEmbedUrl: String?,
+        chatBaseUrl: String,
+        chatApiKey: String,
+        chatModel: String,
+    ) : this(
+        documentSource,
+        PineconeIndex.configured(pineconeApiKey, pineconeIndexUrl, pineconeEmbedUrl),
+        completedDocuments,
+        ChatCompletionsClient.configured(chatBaseUrl, chatApiKey, chatModel),
+    )
+
     override suspend fun ingestDocument(ragFileId: Int, institutionSlug: String): IngestionResult {
         if (ragFileId <= 0 || !institutionSlug.matches(institutionSlugPattern)) {
             return failed(ragFileId, "Invalid document ID or institution slug")

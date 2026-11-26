@@ -1,4 +1,4 @@
--- BE-2. Requires BE-1 tables: users(user_id), institutions(institution_id).
+-- BE-2. Requires BE-1's numeric users.user_id and institutions.id.
 CREATE TABLE IF NOT EXISTS conversations (
     conversation_id   SERIAL PRIMARY KEY,
     is_active         BOOLEAN NOT NULL DEFAULT TRUE,
@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     ip_address        VARCHAR(45),
     service_mode      VARCHAR(30) NOT NULL DEFAULT 'full_llm_bot',
     assigned_admin_id INTEGER REFERENCES users (user_id),
-    institution_id    INTEGER REFERENCES institutions (institution_id),
+    institution_id    INTEGER REFERENCES institutions (id),
     status            VARCHAR(20) NOT NULL DEFAULT 'active',
     priority          VARCHAR(10) NOT NULL DEFAULT 'normal',
     last_message_at   TIMESTAMPTZ DEFAULT now(),

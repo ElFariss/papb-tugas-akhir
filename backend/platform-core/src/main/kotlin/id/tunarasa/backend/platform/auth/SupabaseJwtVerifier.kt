@@ -1,5 +1,7 @@
 package id.tunarasa.backend.platform.auth
 
+import org.jetbrains.exposed.v1.core.eq
+
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import id.tunarasa.backend.platform.db.DatabaseFactory
@@ -8,8 +10,8 @@ import id.tunarasa.backend.platform.db.RolesTable
 import id.tunarasa.backend.platform.db.UsersTable
 import io.ktor.server.auth.Principal
 import io.ktor.util.logging.KtorSimpleLogger
-import org.jetbrains.exposed.sql.JoinType
-import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.jdbc.selectAll
 
 data class UserPrincipal(
     val userId: String,

@@ -150,5 +150,23 @@ internal class PineconeIndex(
             ) { "Use the hostname of a Pinecone dense vector index" }
             return PineconeIndex(apiKey, origin)
         }
+
+        fun configured(apiKey: String, indexHost: String, embedUrl: String?): PineconeIndex {
+            require(apiKey.isNotBlank() && apiKey.all { it in '!'..'~' }) { "Invalid Pinecone API key" }
+            val indexUri = URI.create(if ("://" in indexHost) indexHost else "https://$indexHost")
+            require(isAllowedProviderUri(indexUri) && indexUri.rawPath.isEmpty() &&
+                (indexUri.scheme == "http" || indexUri.port == -1)
+            ) {
+                "Use an HTTPS Pinecone index hostname or a loopback HTTP URL"
+            }
+            val endpoint = embedUrl?.let(URI::create) ?: URI.create("https://api.pinecone.io/embed")
+            require(isAllowedProviderUri(endpoint)) { "Use HTTPS or a loopback HTTP embedding URL" }
+            return PineconeIndex(apiKey, indexUri, endpoint)
+        }
+
+        private fun isAllowedProviderUri(uri: URI): Boolean =
+            uri.host != null && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+                (uri.scheme == "https" ||
+                    (uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1", "::1")))
     }
 }

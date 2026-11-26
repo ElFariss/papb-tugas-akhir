@@ -44,9 +44,11 @@ internal class ChatCompletionsClient(
     companion object {
         fun configured(baseUrl: String, apiKey: String, model: String): ChatCompletionsClient {
             val base = runCatching { URI.create(baseUrl.trimEnd('/')) }.getOrNull()
-            require(base != null && base.scheme == "https" && base.host != null && base.rawUserInfo == null &&
+            require(base != null && base.host != null && base.rawUserInfo == null &&
                 base.rawQuery == null && base.rawFragment == null
-            ) { "Use an HTTPS chat provider base URL" }
+                && (base.scheme == "https" ||
+                    (base.scheme == "http" && base.host in setOf("localhost", "127.0.0.1", "::1")))
+            ) { "Use an HTTPS chat provider URL or a loopback HTTP URL" }
             require(apiKey.isNotBlank() && apiKey.all { it in '!'..'~' }) { "Invalid chat API key" }
             require(model.isNotBlank()) { "A chat model is required" }
             return ChatCompletionsClient(URI.create("$base/chat/completions"), apiKey, model)

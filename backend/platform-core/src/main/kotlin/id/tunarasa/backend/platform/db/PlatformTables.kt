@@ -1,7 +1,7 @@
 package id.tunarasa.backend.platform.db
 
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.javatime.timestamp
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.javatime.timestamp
 import java.time.Instant
 
 /**
@@ -29,6 +29,7 @@ object InstitutionsTable : Table("institutions") {
 
 object UsersTable : Table("users") {
     val id = varchar("id", 100) // Supabase Auth UUID
+    val userId = integer("user_id").autoIncrement().uniqueIndex()
     val email = varchar("email", 255).uniqueIndex()
     val roleId = integer("role_id").references(RolesTable.id)
     val institutionId = integer("institution_id").references(InstitutionsTable.id).nullable()
