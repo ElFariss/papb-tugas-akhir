@@ -14,10 +14,13 @@ object Routes {
     const val SPEECH_TO_TEXT = "speech_to_text/{institutionId}"
     const val CHAT = "chat/{slug}?question={question}&method={method}"
     const val SUMMARY = "summary/{sessionId}"
-
-    // Admin Flow
-    const val ADMIN_LOGIN = "admin_login"
-    const val ADMIN_DASHBOARD = "admin_dashboard"
+    const val ADMIN_SIGN_IN = "admin/sign-in"
+    const val ADMIN_DASHBOARD = "admin/dashboard"
+    const val ADMIN_QUEUE = "admin/queue"
+    // Admin Routes
+    const val ADMIN_QA_LOGS = "admin/qa-logs"
+    const val ADMIN_INSTITUTIONS = "admin/institutions"
+    const val ADMIN_USERS = "admin/users"
 
     fun popularQuestions(institutionId: String, institutionName: String) =
         "popular_questions/$institutionId/$institutionName"
@@ -33,4 +36,5 @@ object Routes {
     fun chat(slug: String, initialQuestion: String = "", method: String = "text") =
         "chat/${Uri.encode(slug)}?question=${Uri.encode(initialQuestion)}&method=${Uri.encode(method)}"
     fun summary(sessionId: String) = "summary/$sessionId"
+
 }

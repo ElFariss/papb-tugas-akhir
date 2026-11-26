@@ -21,6 +21,8 @@ import id.tunarasa.app.ui.publicflow.sibi.SibiTranslatorScreen
 import id.tunarasa.app.ui.publicflow.stt.SpeechToTextScreen
 import id.tunarasa.app.ui.publicflow.welcome.WelcomeScreen
 import id.tunarasa.app.ui.summary.SummaryScreen
+import id.tunarasa.app.ui.admin.InstitutionAdminScreen
+import id.tunarasa.app.ui.summary.NoteScreen
 
 @Composable
 fun TunarasaNavHost() {
@@ -180,8 +182,9 @@ fun TunarasaNavHost() {
             arguments = listOf(navArgument("token") { type = NavType.StringType })
         ) { backStackEntry ->
             val token = backStackEntry.arguments?.getString("token").orEmpty()
-            SummaryScreen(
+            NoteScreen(
                 token = token,
+                onBackClick = { navController.popBackStack() },
                 onBackToHome = {
                     navController.popBackStack(Routes.WELCOME, inclusive = false)
                 }
@@ -190,10 +193,53 @@ fun TunarasaNavHost() {
 
         // --- ALUR ADMIN ---
 
-        composable("admin/sign-in") { SignInScreen() }
-        composable("admin/queue") { AdminQueueScreen() }
-        composable("admin/dashboard") { DashboardScreen() }
-        composable("admin/qa-logs") { QaLogsScreen() }
-        composable("admin/users") { UserManagementScreen() }
+        composable(Routes.ADMIN_SIGN_IN) {
+            SignInScreen(
+                onBackClick = { navController.popBackStack() },
+                onSignInSuccess = {
+                    navController.navigate(Routes.ADMIN_DASHBOARD) {
+                        popUpTo(Routes.ADMIN_SIGN_IN) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(Routes.ADMIN_DASHBOARD) {
+            DashboardScreen(
+                onNavigateToQueue = { navController.navigate(Routes.ADMIN_QUEUE) },
+                onNavigateToQaLogs = { navController.navigate(Routes.ADMIN_QA_LOGS) },
+                onNavigateToInstitutions = { navController.navigate(Routes.ADMIN_INSTITUTIONS) },
+                onNavigateToUsers = { navController.navigate(Routes.ADMIN_USERS) },
+                onLogout = {
+                    navController.navigate(Routes.ADMIN_SIGN_IN) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(Routes.ADMIN_QUEUE) {
+            AdminQueueScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.ADMIN_QA_LOGS) {
+            QaLogsScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.ADMIN_INSTITUTIONS) {
+            InstitutionAdminScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.ADMIN_USERS) {
+            UserManagementScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
     }
 }
