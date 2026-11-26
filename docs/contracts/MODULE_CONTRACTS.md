@@ -65,3 +65,23 @@ so thresholds based on old data need to be revisited.
 `id.tunarasa.contracts.RagLlmService`: `ingestDocument`, `askRag`, `askGesture`, `clusterFaqs`,
 `evaluateResponse`. The method names come from the task table; **the return types are a draft** that AI-2, BE-1 and
 BE-2 still have to confirm.
+
+### BE-1 document ingestion
+
+BE-1 supplies a `RagDocumentSource` when wiring `DefaultRagLlmService`. Resolve the upload using
+both `ragFileId` and `institutionSlug`, returning a readable local path and the original filename.
+Each upload ID identifies immutable file contents. BE-1 owns the job and persists
+`IngestionResult.status` and the error or chunk count. Keep the file available for retries and
+prevent a duplicate job from overwriting a completed status.
+Only completed uploads are eligible for retrieval because a failed job may have written some vectors.
+See [AI-2 ingestion configuration](../../backend/rag-llm/README.md#document-ingestion).
+
+### BE-2 institution Q&A
+
+Once BE-2 authorizes the session and resolves its institution, call
+`askRag(question, sessionId, institutionSlug)` and forward the returned answer and sources.
+BE-1 supplies `CompletedRagDocuments` to restrict retrieval to current completed uploads
+from that institution. Treat `IllegalArgumentException` as invalid input and `IOException`
+as a failure to complete the request. Empty sources represent an abstention or a prompt to
+select an institution. The response confidence is derived from retrieval similarity.
+See [AI-2 Q&A configuration](../../backend/rag-llm/README.md#institution-qa).
