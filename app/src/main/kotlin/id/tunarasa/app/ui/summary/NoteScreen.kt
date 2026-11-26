@@ -40,12 +40,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.time.Instant
-import java.time.LocalDateTime
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 @Serializable
 data class NoteData(
@@ -279,7 +276,6 @@ fun NoteScreen(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    // Banner feedback salin
                     if (!bannerMessage.isNullOrBlank()) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
@@ -304,7 +300,6 @@ fun NoteScreen(
                         }
                     }
 
-                    // Header status & deskripsi
                     ElevatedCard(
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.elevatedCardColors(
@@ -373,7 +368,6 @@ fun NoteScreen(
                         }
                     }
 
-                    // Grid Metadata (ID Catatan & Waktu Dibuat)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -396,7 +390,6 @@ fun NoteScreen(
                         )
                     }
 
-                    // Isi Catatan Utama
                     ElevatedCard(
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.elevatedCardColors(
@@ -466,7 +459,6 @@ fun NoteScreen(
                         }
                     }
 
-                    // Kartu Info Token Akses & Kadaluarsa
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xFFEFF6FF),
@@ -521,7 +513,6 @@ fun NoteScreen(
                         }
                     }
 
-                    // Tombol Aksi Navigasi Bawah
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -655,16 +646,36 @@ private suspend fun fetchNoteByToken(
 
 private fun formatIndonesianTimestamp(rawIso: String): String {
     if (rawIso.isBlank()) return "-"
-    val jakartaZone = ZoneId.of("Asia/Jakarta")
-    val formatter = DateTimeFormatter.ofPattern("d MMMM yyyy, HH.mm", Locale("id", "ID"))
+    val jakartaTz = TimeZone.getTimeZone("Asia/Jakarta")
+    val outputFormat = SimpleDateFormat("d MMMM yyyy, HH.mm", Locale.forLanguageTag("id-ID")).apply {
+        timeZone = jakartaTz
+    }
 
-    return runCatching {
-        OffsetDateTime.parse(rawIso).atZoneSameInstant(jakartaZone).format(formatter)
-    }.recoverCatching {
-        Instant.parse(rawIso).atZone(jakartaZone).format(formatter)
-    }.recoverCatching {
-        LocalDateTime.parse(rawIso).atZone(jakartaZone).format(formatter)
-    }.getOrDefault(rawIso)
+    val normalized = rawIso.trim()
+        .replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
+        .replace(Regex("Z$"), "+0000")
+
+    val inputPatterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+        "yyyy-MM-dd'T'HH:mm:ssZ",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS",
+        "yyyy-MM-dd'T'HH:mm:ss",
+    )
+
+    for (pattern in inputPatterns) {
+        val parsed = runCatching {
+            SimpleDateFormat(pattern, Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }.parse(normalized)
+        }.getOrNull()
+
+        if (parsed != null) {
+            return outputFormat.format(parsed)
+        }
+    }
+
+    return rawIso
 }
 
 private fun sampleDemoNote(token: String): NoteResponse = NoteResponse(
