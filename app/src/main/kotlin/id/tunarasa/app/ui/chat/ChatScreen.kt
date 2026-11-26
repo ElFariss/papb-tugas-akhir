@@ -170,7 +170,10 @@ fun ChatScreen(
 
                     if (messages.size > 1) {
                         TextButton(
-                            onClick = { onFinishConversation("session-${System.currentTimeMillis()}") },
+                            onClick = {
+                                id.tunarasa.app.data.session.ActiveConversationCache.update(institutionTitle, messages)
+                                onFinishConversation("note-${System.currentTimeMillis()}")
+                            },
                             contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
                             Text(

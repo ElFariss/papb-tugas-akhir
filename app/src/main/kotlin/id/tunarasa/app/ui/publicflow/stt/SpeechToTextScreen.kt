@@ -164,6 +164,12 @@ fun SpeechToTextScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Pengenalan suara memakai layanan perangkat yang dapat mengirim audio ke penyedia layanannya.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             // Tombol Mikrofon Besar di Tengah

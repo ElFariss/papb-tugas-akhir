@@ -9,6 +9,7 @@ object Routes {
     const val POPULAR_QUESTIONS = "popular_questions/{institutionId}/{institutionName}"
     const val COMM_METHOD = "comm_method/{institutionId}"
     const val FAQ = "faq/{slug}?name={name}"
+    const val ABOUT = "about"
     const val SIBI_TRANSLATOR = "sibi_translator/{institutionId}"
     const val SPEECH_TO_TEXT = "speech_to_text/{institutionId}"
     const val CHAT = "chat/{slug}?question={question}&method={method}"

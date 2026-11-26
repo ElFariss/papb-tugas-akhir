@@ -3,7 +3,12 @@ package id.tunarasa.app.ui.publicflow.welcome
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,21 +28,54 @@ import id.tunarasa.app.ui.theme.BlueHeroCard
 @Composable
 fun WelcomeScreen(
     onStartClick: () -> Unit,
-    onAdminLoginClick: () -> Unit = {}
+    onAdminLoginClick: () -> Unit = {},
+    onOpenAbout: () -> Unit = {}
 ) {
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onOpenAbout,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Tentang TunaRasa",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Bagian Atas: Kartu Hero + Teks Sambutan
+            // Bagian Atas: Dapat di-scroll jika font sistem diperbesar
             Column(
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             ) {
                 // Kartu Hero Biru Lembut dengan Logo Tunarasa
                 Box(
@@ -53,7 +91,7 @@ fun WelcomeScreen(
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.tunarasa_logo),
-                            contentDescription = "Logo Tunarasa",
+                            contentDescription = "Logo TunaRasa",
                             modifier = Modifier
                                 .height(120.dp)
                                 .wrapContentWidth(),
@@ -62,10 +100,9 @@ fun WelcomeScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Jika file tunarasa_logo.png sudah memuat tulisan "Tunarasa",
-                        // blok Text("Tunarasa") di bawah ini bisa dihapus agar tidak ganda.
+                        // Hapus blok Text("TunaRasa") di bawah ini jika tunarasa_logo sudah memuat tulisan logo
                         Text(
-                            text = "Tunarasa",
+                            text = "TunaRasa",
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -85,7 +122,6 @@ fun WelcomeScreen(
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                // Teks Sambutan (Rata Kiri sesuai mockup)
                 Text(
                     text = "Selamat datang!",
                     style = MaterialTheme.typography.headlineSmall,
@@ -101,6 +137,8 @@ fun WelcomeScreen(
                     style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
             // Bagian Bawah: Tombol Utama + Keterangan
@@ -123,12 +161,17 @@ fun WelcomeScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Mulai sekarang  →",
+                            text = "Mulai sekarang",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -144,7 +187,7 @@ fun WelcomeScreen(
 
                 TextButton(
                     onClick = onAdminLoginClick,
-                    modifier = Modifier.heightIn(min = 40.dp)
+                    modifier = Modifier.heightIn(min = 48.dp)
                 ) {
                     Text(
                         text = "Masuk sebagai Admin",

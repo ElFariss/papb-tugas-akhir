@@ -6,11 +6,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import id.tunarasa.app.ui.PlaceholderScreen
 import id.tunarasa.app.ui.about.AboutScreen
 import id.tunarasa.app.ui.admin.AdminQueueScreen
 import id.tunarasa.app.ui.admin.DashboardScreen
-import id.tunarasa.app.ui.admin.InstitutionAdminScreen
 import id.tunarasa.app.ui.admin.QaLogsScreen
 import id.tunarasa.app.ui.admin.SignInScreen
 import id.tunarasa.app.ui.admin.UserManagementScreen
@@ -22,7 +20,6 @@ import id.tunarasa.app.ui.publicflow.method.CommMethodScreen
 import id.tunarasa.app.ui.publicflow.sibi.SibiTranslatorScreen
 import id.tunarasa.app.ui.publicflow.stt.SpeechToTextScreen
 import id.tunarasa.app.ui.publicflow.welcome.WelcomeScreen
-import id.tunarasa.app.ui.summary.NoteScreen
 import id.tunarasa.app.ui.summary.SummaryScreen
 
 @Composable
@@ -33,10 +30,19 @@ fun TunarasaNavHost() {
         navController = navController,
         startDestination = Routes.WELCOME
     ) {
+        // --- ALUR PUBLIK ---
+
         composable(Routes.WELCOME) {
             WelcomeScreen(
                 onStartClick = { navController.navigate(Routes.INSTITUTIONS) },
-                onAdminLoginClick = { navController.navigate("admin/sign-in") }
+                onAdminLoginClick = { navController.navigate("admin/sign-in") },
+                onOpenAbout = { navController.navigate(Routes.ABOUT) }
+            )
+        }
+
+        composable(Routes.ABOUT) {
+            AboutScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -44,18 +50,41 @@ fun TunarasaNavHost() {
             InstitutionScreen(
                 onBackClick = { navController.popBackStack() },
                 onSelectInstitution = { institution ->
-                    navController.navigate(Routes.commMethod(institution.id))
+                    navController.navigate(
+                        Routes.faq(slug = institution.id, name = institution.name)
+                    )
                 }
             )
         }
 
         composable(
-            route = Routes.COMM_METHOD,
-            arguments = listOf(navArgument("institutionId") { type = NavType.StringType })
+            route = Routes.FAQ,
+            arguments = listOf(
+                navArgument("slug") { type = NavType.StringType },
+                navArgument("name") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }
+            )
         ) { backStackEntry ->
-            val instId = backStackEntry.arguments?.getString("institutionId").orEmpty()
-            PlaceholderScreen("Pilih Metode Komunikasi ($instId)")
+            val slug = backStackEntry.arguments?.getString("slug").orEmpty()
+            val name = backStackEntry.arguments?.getString("name").orEmpty()
+
+            FaqScreen(
+                institutionSlug = slug,
+                institutionName = name,
+                onBackClick = { navController.popBackStack() },
+                onSelectQuestion = { question ->
+                    navController.navigate(
+                        Routes.chat(slug = slug, initialQuestion = question, method = "text")
+                    )
+                },
+                onAskOtherClick = {
+                    navController.navigate(Routes.commMethod(slug))
+                }
+            )
         }
+
         composable(
             route = Routes.COMM_METHOD,
             arguments = listOf(navArgument("institutionId") { type = NavType.StringType })
@@ -86,6 +115,7 @@ fun TunarasaNavHost() {
                 }
             )
         }
+
         composable(
             route = Routes.SPEECH_TO_TEXT,
             arguments = listOf(navArgument("institutionId") { type = NavType.StringType })
@@ -132,51 +162,38 @@ fun TunarasaNavHost() {
             )
         }
 
-        composable("about") { AboutScreen() }
-        composable("faq/{slug}") { FaqScreen() }
-        composable("chat/{slug}") { ChatScreen() }
-        composable("note/{token}") { NoteScreen() }
-        composable("summary/{token}") { SummaryScreen() }
-        composable("admin/sign-in") { SignInScreen() }
-        composable("admin/queue") { AdminQueueScreen() }
-        composable("admin/dashboard") { DashboardScreen() }
-        composable("admin/qa-logs") { QaLogsScreen() }
-        composable(Routes.INSTITUTIONS) {
-            InstitutionScreen(
-                onBackClick = { navController.popBackStack() },
-                onSelectInstitution = { institution ->
-                    navController.navigate(
-                        Routes.faq(slug = institution.id, name = institution.name)
-                    )
+        composable(
+            route = "summary/{token}",
+            arguments = listOf(navArgument("token") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val token = backStackEntry.arguments?.getString("token").orEmpty()
+            SummaryScreen(
+                token = token,
+                onBackToHome = {
+                    navController.popBackStack(Routes.WELCOME, inclusive = false)
                 }
             )
         }
 
         composable(
-            route = Routes.FAQ,
-            arguments = listOf(
-                navArgument("slug") { type = NavType.StringType },
-                navArgument("name") {
-                    type = NavType.StringType
-                    defaultValue = ""
-                }
-            )
+            route = "note/{token}",
+            arguments = listOf(navArgument("token") { type = NavType.StringType })
         ) { backStackEntry ->
-            val slug = backStackEntry.arguments?.getString("slug").orEmpty()
-            val name = backStackEntry.arguments?.getString("name").orEmpty()
-
-            FaqScreen(
-                institutionSlug = slug,
-                institutionName = name,
-                onBackClick = { navController.popBackStack() },
-                onSelectQuestion = { question ->
-                    navController.navigate(Routes.chat(slug = slug, initialQuestion = question))
-                },
-                onAskOtherClick = {
-                    navController.navigate(Routes.commMethod(slug))
+            val token = backStackEntry.arguments?.getString("token").orEmpty()
+            SummaryScreen(
+                token = token,
+                onBackToHome = {
+                    navController.popBackStack(Routes.WELCOME, inclusive = false)
                 }
             )
         }
+
+        // --- ALUR ADMIN ---
+
+        composable("admin/sign-in") { SignInScreen() }
+        composable("admin/queue") { AdminQueueScreen() }
+        composable("admin/dashboard") { DashboardScreen() }
+        composable("admin/qa-logs") { QaLogsScreen() }
         composable("admin/users") { UserManagementScreen() }
     }
 }
